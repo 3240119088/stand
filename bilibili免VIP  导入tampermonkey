@@ -1,0 +1,2665 @@
+(function () {
+    /*1.11.6 mod区域*/
+    let originalInterfaceList = [{
+        "name": "Mao播放器",
+        "category": "1",
+        "url": " https://www.cuan.la/m3u8.php?url="
+    }, {
+        "name": "Parwix",
+        "category": "1",
+        "url": "https://vip.parwix.com:4433/player/?url="
+    },
+    {
+        "name": "m1907",
+        "category": "1",
+        "url": "https://z1.m1907.cn/?jx="
+    },
+    {
+        "name": "月亮",
+        "category": "1",
+        "url": "https://api.yueliangjx.com/?url="
+    },
+    {
+        "name": "showxi",
+        "category": "1",
+        "url": "https://showxi.xyz/mov/s/?sv=3&url=",
+        "special": "多线"
+    },
+    {
+        "name": "OK",
+        "category": "1",
+        "url": "https://okjx.cc/?url=",
+        "special": "多线"
+    },
+    ];
+
+    let repeatp = 0 //去重概率[0-100]
+    /*mod区域结束*/
+
+    var player;
+    var playerRect;
+    var minpool = [];
+    var domPool = [];
+    var domtopdownPool = [];
+    var listobj
+    //1.11.6修复弹幕重复问题
+    let minpoolout = [];
+    let lastvideotime = 0;
+    //1.11.7全屏问题
+    //let lastplaywidth = 0;
+
+    //1.12.1 set
+    let dmblock_scroll;
+    let dmblock_top;
+    let dmblock_bottom;
+    let dmblock_color;
+    let dmblock_special;
+    let buiSwitch = 'true';
+
+    var distance = 25
+    var fontSize = 25;
+    let xmlhtml;
+    //console.log(1, window.location.href)
+
+    function xmlToJson(xml) {
+
+        // Create the return object
+        var obj = {};
+
+        if (xml.nodeType == 1) { // element
+            // do attributes
+            if (xml.attributes.length > 0) {
+                obj["@attributes"] = {};
+                for (var j = 0; j < xml.attributes.length; j++) {
+                    var attribute = xml.attributes.item(j);
+                    obj["@attributes"][attribute.nodeName] = attribute.nodeValue;
+                }
+            }
+        } else if (xml.nodeType == 3) { // text
+            obj = xml.nodeValue;
+        }
+
+        // do children
+        if (xml.hasChildNodes()) {
+            for (var i = 0; i < xml.childNodes.length; i++) {
+                var item = xml.childNodes.item(i);
+                var nodeName = item.nodeName;
+                if (typeof (obj[nodeName]) == "undefined") {
+                    obj[nodeName] = xmlToJson(item);
+                } else {
+                    if (typeof (obj[nodeName].push) == "undefined") {
+                        var old = obj[nodeName];
+                        obj[nodeName] = [];
+                        obj[nodeName].push(old);
+                    }
+                    obj[nodeName].push(xmlToJson(item));
+                }
+            }
+        }
+        return obj;
+    };
+    //1.11.7 稳定发送
+    function postdownmessage(obj) {
+        for (var posta = 0; posta <= 3; posta++) {
+            try {
+                window.frames[posta].postMessage(obj, '*');
+            } catch { }
+            for (var postb = 0; postb <= 3; postb++) {
+                try {
+                    window.frames[posta].frames[postb].postMessage(obj, '*');
+                } catch { }
+                for (var postc = 0; postc <= 3; postc++) {
+                    try {
+                        window.frames[posta].frames[postb].frames[postc].postMessage(obj, '*');
+                    } catch { }
+                }
+            }
+        }
+    }
+
+    function getBV() {
+        let bv = $("a.av-link[target='_blank']")[0]
+        if (bv) {
+            //console.log(bv.innerText);
+            $.getJSON("https://api.bilibili.com/x/player/pagelist?bvid=" + bv.innerText,
+                function (result) {
+
+                    xmlhtml = `https://api.bilibili.com/x/v1/dm/list.so?oid=${result.data[0].cid}`
+                    //ajax解析xml文件
+                    console.log(xmlhtml);
+                    $.ajax({
+                        url: xmlhtml,
+                        dataType: "xml",
+                        success: function (xml) {
+                            //console.log('xmllist', xmlToJson(xml));
+                            let listjson = xmlToJson(xml)
+                            //console.log($('.bilibili-player-video-info-danmaku-number'), listjson.i.d.length)
+                            $('.bilibili-player-video-info-danmaku-number').text(listjson.i.d.length)
+                            //console.log(window.frames.length, listjson.i.d.length);
+                            postdownmessage({
+                                obj: listjson,
+                                str: 'xmllist'
+                            })
+                        }
+
+                    })
+                })
+
+        } else {
+            setTimeout(function () {
+                getBV()
+            },
+                500)
+        }
+    }
+
+    function receiveInfoFromAnotherDomain() {
+        //首先让window添加一个事件监听函数，表明它可以监听窗口对象的message事件 
+        //它受到事件时，会先判断是否来自指定的Domain(不是所有Domain丢过来的事件它都处理的） 
+        window.addEventListener("message",
+            function (ev) {
+                switch (window.location.host) {
+                    case 'www.bilibili.com':
+                        //console.log(ev.origin, ' message to', window.location.href, ev.data);
+                        if (ev.origin != 'https://www.bilibili.com' && ev.origin != 'https://message.bilibili.com') {
+                            //console.log(ev.origin, ' message to', window.location.href, ev.data);
+                            if (ev.data.str == 'hasplayer') {
+                                getBV()
+                            }
+                        }
+                        break
+                    default:
+                        window.top.postMessage({
+                            fromweb: window.location.href,
+                            obj: ev.data,
+                            str: '来自iframe:',
+                            from: ev.origin
+                        },
+                            '*');
+                        switch (ev.data.str) {
+                            case 'xmllist':
+                                listobj = ev.data.obj;
+                                break;
+                            case 'checktrue':
+                                buiSwitch = 'true';
+                                break;
+                            case 'checkfalse':
+                                buiSwitch = 'false';
+                                break;
+                            case 'scrollon':
+                                dmblock_scroll = 'on';
+                                break;
+                            case 'scrolloff':
+                                dmblock_scroll = 'off';
+                                break;
+                            case 'topon':
+                                dmblock_top = 'on';
+                                break;
+                            case 'topoff':
+                                dmblock_top = 'off';
+                                break;
+                            case 'bottomon':
+                                dmblock_bottom = 'on';
+                                break;
+                            case 'bottomoff':
+                                dmblock_bottom = 'off';
+                                break;
+                            case 'coloron':
+                                dmblock_color = 'on';
+                                break;
+                            case 'coloroff':
+                                dmblock_color = 'off';
+                                break;
+                        }
+                }
+            })
+        window.top.postMessage({
+            fromweb: window.location.href,
+            obj: 'iframe监听初始化',
+            str: '来自iframe:',
+        },
+            '*');
+    }
+
+    function detecH5Player(findplayertime) {
+
+        player = document.querySelector('video');
+        if (player) {
+            //console.log(window.location.href+'发现h5')
+            receiveInfoFromAnotherDomain();
+            window.top.postMessage({
+                str: 'hasplayer',
+                fromweb: window.location.href
+            },
+                '*');
+            playerRect = player.getBoundingClientRect();
+            initcss();
+
+            player.addEventListener('pause',
+                function () { //暂停开始执行的函数
+                    $('.left').each(function (index, element) {
+                        element.style.willChange = 'auto'
+                        let domRect = element.getBoundingClientRect();
+                        let domLeft = domRect.left - playerRect.left;
+                        $(element).css('transform', `translateX(${domLeft}px)`);
+                        //element.style.left = `${domLeft}px`
+                        $(element).css('transition', `transform 0s linear`);
+
+                    })
+                });
+            //1.11.7
+            document.addEventListener("fullscreenchange", function (e) {
+                refreshDom() //player.clientWidth-lastplaywidth
+            })
+            //lastplaywidth = player.clientWidth
+            player.addEventListener('playing',
+                function () { //暂停开始执行的函数
+                    playtime = (new Date()).getTime()
+                    $('.left').each(function (index, element) {
+                        let domRect = element.getBoundingClientRect()
+                        let domLeft = domRect.left - playerRect.left
+                        let oldS = element.clientWidth + player.clientWidth
+                        let newS = element.clientWidth + domLeft
+                        let oldT = 0.0074 * (element.clientWidth + player.clientWidth)
+                        let newT = newS / oldS * oldT
+                        //console.log(element.clientWidth+'，'+player.clientWidth+'，'+oldS+'，'+newS+'，'+oldT+'，'+newT)
+                        $(element).css('transition', `transform ${newT}s linear`);
+                        $(element).addClass('left');
+
+                        element.style.willChange = 'transform'
+                        element.style.transform = `translateX(${-element.clientWidth - newS}px)`;
+
+                    })
+                });
+            player.addEventListener('timeupdate',
+                function () {
+                    //1.11.6 修复弹幕重复、前进后退清屏、后退重载弹幕
+                    let lastlen = parseInt(lastvideotime / 60)
+                    let startlen = parseInt(player.currentTime / 60)
+                    if (lastvideotime > player.currentTime) {
+                        for (var c = startlen; c <= lastlen; c++) {
+                            if (minpoolout[c].length != 0) {
+                                minpool[c] = minpool[c].concat(minpoolout[c])
+                                minpoolout[c].length = 0
+                            }
+                        }
+                        refreshDomscreen()
+                    } else if (lastvideotime + 2 < player.currentTime) {
+                        refreshDomscreen()
+                    }
+                    lastvideotime = player.currentTime
+                    if (minpool.length == 0 && listobj) {
+                        minpool = new Array(parseInt(player.duration / 60));
+                        let minlen = minpool.length
+                        for (var a = 0; a <= minlen; a++) {
+                            minpool[a] = []
+                        }
+                        minpoolout = new Array(minlen);
+                        for (var b = 0; b <= minlen; b++) {
+                            minpoolout[b] = []
+                        }
+                        let len = listobj.i.d.length
+                        //window.top.postMessage({obj:'listobj.i.d.length:'+listobj.i.d.length,str:'来自iframe:',from:window.location.href},'*');
+                        for (var j = 0; j < len; j++) {
+                            let strp = listobj.i.d[j]['@attributes'].p
+                            let arrp = strp.split(',');
+                            let arrpJson = {
+                                "time": arrp[0],
+                                "type": arrp[1],
+                                "size": arrp[2],
+                                "rgb": arrp[3],
+                                "pool": arrp[5],
+                                "text": listobj.i.d[j]['#text']
+                            };
+                            if (repeatp == 100 || repeatp > Math.floor(Math.random() * 100)) {
+                                let len2 = minpool[parseInt(arrp[0] / 60)].length
+                                let needpush = true
+                                for (var i = 0; i < len2; i++) {
+                                    if (minpool[parseInt(arrp[0] / 60)][i].text == arrpJson.text) {
+                                        needpush = false;
+                                        break;
+                                    }
+                                }
+                                if (needpush == true) {
+                                    try { minpool[parseInt(arrp[0] / 60)].push(arrpJson); } catch { }
+
+                                }
+                            } else {
+                                try { minpool[parseInt(arrp[0] / 60)].push(arrpJson); } catch { }
+                            }
+                            /*window.top.postMessage({
+                              obj: 'minpool push：' + minpool[parseInt(arrp[0] / 60)][minpool[parseInt(arrp[0] / 60)].length - 1],
+                              str: '来自iframe:',
+                              from: window.location.href
+                            }, '*');*/
+                        }
+                    }
+                    //window.top.postMessage({obj:'currentTime：'+player.currentTime+'  '+minpool.length+'  '+domPool.length,str:'来自iframe:',from:window.location.href},'*');  
+                    $('.topdown').each(function (index, element) {
+                        if (element.innerText != '') {
+                            let nowtime = (new Date()).getTime();
+                            let lasttime = parseInt(nowtime) - parseInt($(element).prop("name"))
+                            //console.log('lasttime：'+lasttime+' '+typeof lasttime);
+                            if (lasttime >= 4500) {
+                                //console.log('lasttime2：'+lasttime+' '+typeof lasttime);
+                                element.innerText = ''
+                                element.name = ''
+                            }
+                        }
+                    });
+                    //window.top.postMessage({obj:buiSwitch.prop("checked"),str:'来自iframe:',from:window.location.href},'*'); 
+                    if (minpool.length != 0 && domPool.length != 0 && buiSwitch == 'true') {
+                        let channel;
+                        let nowlen = parseInt(player.currentTime / 60);
+                        //console.log('currentTime：'+player.currentTime); 
+                        //window.top.postMessage({obj:'currentTime：'+player.currentTime+'  '+minpool[nowlen].length,str:'来自iframe:',from:window.location.href},'*');  
+                        if (!$(player).paused) {
+                            for (var j = minpool[nowlen].length - 1; j > -1; j--) {
+                                //console.log('pool:'+minpool[nowlen][j].pool) 
+                                //window.top.postMessage({obj:minpool[nowlen][j],str:'来自iframe:',from:window.location.href},'*');  
+                                if (minpool[nowlen][j].time >= player.currentTime && minpool[nowlen][j].time <= player.currentTime + 0.5 && minpool[nowlen][j].type == '1' && dmblock_scroll != 'off') {
+                                    if (minpool[nowlen][j].rgb != '16777215' && dmblock_color == 'off') { return }
+                                    channel = getChannel()
+                                    //console.log('channel:'+channel)
+                                    if (channel != -1) {
+                                        let arrpJson = minpool[nowlen][j]
+                                        //console.log(minpool[nowlen][j].time+','+player.currentTime+'  biu~ [' + minpool[nowlen][j].text + ']');                  
+                                        let dom = domPool[channel].shift() //把数组的第一个元素从其中删除
+                                        domPool[channel].push(dom); //向数组的末尾添加一个或多个元素                    
+                                        shootDanmu(dom, arrpJson, channel);
+                                        minpoolout[nowlen].push(minpool[nowlen][j])
+                                        minpool[nowlen].splice(j, 1);
+                                    }
+                                } else if (minpool[nowlen][j].time >= player.currentTime && minpool[nowlen][j].time <= player.currentTime + 0.5 && minpool[nowlen][j].type != '1') {
+                                    if (minpool[nowlen][j].type == '4' && dmblock_bottom == 'off') { return }
+                                    if (minpool[nowlen][j].type == '5' && dmblock_top == 'off') { return }
+                                    if (minpool[nowlen][j].rgb != '16777215' && dmblock_color == 'off') { return }
+                                    channel = gettopdownChannel(minpool[nowlen][j].type);
+                                    //console.log('gettopdownChannel:' + channel);
+                                    if (channel != -1) {
+                                        let arrpJson = minpool[nowlen][j]
+                                        //console.log(minpool[nowlen][j].time+','+player.currentTime+'  biu~ [' + danmu + ']');
+                                        let dom = domtopdownPool[channel];
+                                        shoottopdownDanmu(dom, arrpJson, channel);
+                                        minpoolout[nowlen].push(minpool[nowlen][j])
+                                        minpool[nowlen].splice(j, 1);
+                                    }
+                                }
+                            }
+                        }
+                    } else if (buiSwitch == 'false') {
+                        refreshDomscreen();
+                    }
+                })
+        } else {
+            // 轮询检测
+            setTimeout(function () {
+                //console.log(window.location.href + '开始检测h5', findplayertime, new Date().getTime() - findplayertime);
+                if (new Date().getTime() - findplayertime <= 5000) {
+                    detecH5Player(findplayertime)
+                }
+            },
+                500)
+        }
+    }
+
+    function refreshDomscreen() {
+        //1.11.6 清除在场弹幕
+        $('.left').each(function (index, element) {
+            $(element).css('transition', `transform 0s linear`);
+            $(element).addClass('right');
+            element.style.left = 0
+            element.style.willChange = 'transform'
+            element.style.transition = null;
+            element.style.willChange = 'auto'
+            element.style.transform = `translateX(${player.clientWidth}px)`
+            //element.style.left = `${player.clientWidth}px`
+            element.innerText = ''
+            element.className = 'right';
+
+        })
+        for (let i = 0; i < CHANNEL_COUNT; i++) {
+            domtopdownPool[i].innerText = ''
+        }
+
+        $('.right').each(function (index, element) {
+            element.style.left = 0
+            element.style.transform = `translateX(${player.clientWidth}px)`
+        })
+        $('.left').each(function (index, element) {
+            element.removeEventListener('transitionend', recoverLiftdom(element));
+            element.addEventListener('transitionend', recoverLiftdom(element));
+        })
+    }
+    var MAX_DM_COUNT = 10
+    var CHANNEL_COUNT = 0
+
+    function initcss() {
+        let css = `.right {
+              position: absolute;
+              visibility: hidden;
+              white - space: nowrap;
+              /*left: 700px;
+        transform: translateX(700px);*/
+          }.left {
+              position: absolute;
+              white - space: nowrap;
+              user - select: none;
+              /* transition: transform 7s linear; 时间相同 越长的弹幕滑动距离越长 所以越快~ */
+          }.topdown {
+              position: absolute;
+              white - space: nowrap;
+              user - select: none;
+  
+          }`
+        GM_addStyle(css);
+        refreshDom();
+    }
+
+    function refreshDom() {
+        window.top.postMessage({
+            obj: 'refreshDom',
+            str: '来自iframe:',
+            from: window.location.href
+        }, '*');
+        if (Math.floor(player.clientHeight / fontSize) - CHANNEL_COUNT > 0) {
+            // 先new一些span 重复利用这些DOM
+            for (let j = Math.floor(player.clientHeight / fontSize); j > CHANNEL_COUNT; j--) {
+                let doms = [];
+                for (let i = 0; i < MAX_DM_COUNT; i++) {
+                    // 要全部放进player
+                    let dom = document.createElement('div');
+                    //alert(fontSize)
+                    dom.style.fontSize = fontSize + 'px';
+                    dom.style.color = 'rgb(255,255,255)';
+                    dom.style.fontFamily = 'SimHei, "Microsoft JhengHei", Arial, Helvetica, sans-serif'
+                    dom.style.fontWeight = 'bold'
+                    dom.style.opacity = '1' //不透明度
+                    dom.style.textShadow = 'rgb(0, 0, 0) 1px 0px 1px, rgb(0, 0, 0) 0px 1px 1px, rgb(0, 0, 0) 0px -1px 1px, rgb(0, 0, 0) -1px 0px 1px';
+                    //dom.style.transform = `translateX(${player.clientWidth}px)`
+                    dom.style.left = `${player.clientWidth}px`
+                    dom.style.willChange = 'auto'
+                    // 初始化dom的位置 通过设置className
+                    dom.className = 'right';
+                    // DOM的通道是固定的 所以设置好top就不需要再改变了
+                    dom.style.top = (-j + Math.floor(player.clientHeight / fontSize) + 1) * fontSize + 'px';
+                    player.parentNode.appendChild(dom);
+
+                    // 放入改通道的DOM池
+                    doms.push(dom);
+                    // 每次到transition结束的时候 就是弹幕划出屏幕了 将DOM位置重置 再放回DOM池
+                    dom.addEventListener('transitionend', recoverLiftdom(dom));
+                }
+                domPool.push(doms);
+
+                let dom2 = document.createElement('div');
+                dom2.style.fontSize = fontSize + 'px';
+                dom2.style.color = 'rgb(255,255,255)';
+                dom2.style.fontFamily = 'SimHei, "Microsoft JhengHei", Arial, Helvetica, sans-serif'
+                dom2.style.fontWeight = 'bold'
+                dom2.style.opacity = '1' //不透明度
+                dom2.style.textShadow = 'rgb(0, 0, 0) 1px 0px 1px, rgb(0, 0, 0) 0px 1px 1px, rgb(0, 0, 0) 0px -1px 1px, rgb(0, 0, 0) -1px 0px 1px';
+                dom2.style.willChange = 'auto'
+                dom2.style.top = (-j + Math.floor(player.clientHeight / fontSize) + 1) * fontSize + 'px';
+                dom2.style.left = `${(player.clientWidth - dom2.clientWidth) / 2}px`;
+                dom2.className = 'topdown';
+
+                player.parentNode.appendChild(dom2);
+                domtopdownPool.push(dom2);
+            }
+
+        } else {
+            //1.11.7 删除多余dom
+            for (let j2 = Math.floor(player.clientHeight / fontSize); j2 < CHANNEL_COUNT; j2++) {
+                for (let i2 = 0; i2 < MAX_DM_COUNT; i2++) {
+                    let thisdom = domPool[j2][i2]
+                    thisdom.parentNode.removeChild(thisdom)
+                }
+                domPool[j2].length = 0
+                domPool.splice(j2, 1);
+                //refreshDomscreen()
+                domtopdownPool[j2].parentNode.removeChild(domtopdownPool[j2])
+                domtopdownPool.splice(j2, 1);
+            }
+        }
+        CHANNEL_COUNT = Math.floor(player.clientHeight / fontSize);
+        /*//1.11.7 修改弹幕默认位置
+        $('.right').each(function (index, element) {
+          element.style.transform = `translateX(${player.clientWidth}px)`
+        })
+        $('.left').each(function (index, element) {
+          element.removeEventListener('transitionend',recoverLiftdom(element));
+          element.addEventListener('transitionend',recoverLiftdom(element));
+        })
+        $('.topdown').each(function (index, element) {
+          element.style.left = `${(player.clientWidth - element.clientWidth) / 2}px`;
+        })*/
+        refreshDomscreen()
+        let refreshDom_time = parseInt(player.currentTime / 60)
+        if (minpool.length != 0) {
+            minpool[refreshDom_time] = minpool[refreshDom_time].concat(minpoolout[refreshDom_time])
+            minpoolout[refreshDom_time].length = 0
+        }
+
+    }
+
+    function recoverLiftdom(dom) {
+        dom.style.transition = null;
+        dom.style.willChange = 'auto'
+        //dom.style.transform = `translateX(${player.clientWidth}px)`
+        dom.style.left = `${player.clientWidth}px`
+        dom.innerText = ''
+        dom.className = 'right';
+    }
+    /**
+     * 获取一个可以发射弹幕的通道 没有则返回-1
+     */
+
+    function getChannel() {
+        for (let i = 0; i < CHANNEL_COUNT; i++) {
+            let lastNumPos = domPool[i].length - 1
+            let lastDom = domPool[i][lastNumPos];
+            //console.log('lastDom：'+lastDom)
+            if (lastDom) {
+                if (lastDom.className == 'right') {
+                    //console.log('捷径')
+                    return i
+                }
+                let lastDomPos = lastDom.getBoundingClientRect();
+                //console.log('lastDomPos.right：'+lastDomPos.right+'playerRect.right：'+playerRect.right)
+                // 轨道中最后一个元素要求已经全部进入展示区域
+                if (lastDomPos.right > playerRect.right) {
+                    continue
+                }
+
+                let occupyS = lastDomPos.right - playerRect.left
+                //console.log('playerRect.left：'+occupyS+'player.clientWidth：'+player.clientWidth)
+                // 追及问题
+                if (player.clientWidth - occupyS < distance) {
+                    continue
+                }
+                for (let j = 0; j < domPool[i].length; j++) {
+                    if (domPool[i][j].className == 'right') {
+                        return i
+                    }
+                }
+
+            }
+        }
+        return -1;
+    }
+
+    function gettopdownChannel(type) {
+        for (let i = 0; i < CHANNEL_COUNT; i++) {
+            if (type == 4) {
+                let lastNumPos = domtopdownPool.length - i - 1
+                let downDom = domtopdownPool[lastNumPos];
+                if (downDom.innerText == '') {
+                    return i
+                }
+            } else if (type == 5) {
+                let lastNumPos2 = i
+                let topDom = domtopdownPool[lastNumPos2];
+                if (topDom.innerText == '') {
+                    return i
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 根据DOM和弹幕信息 发射弹幕
+     */
+    function shootDanmu(dom, arrpJson, channel) {
+
+        dom.innerText = arrpJson.text;
+        console.log(' biu1~ [' + arrpJson.text + ']');
+
+        let num16 = parseInt(arrpJson.rgb).toString(16);
+        dom.style.color = '#' + (Array(6).join(0) + num16).slice(-6);
+        dom.style.fontSize = arrpJson.size + 'px';
+        // 如果为每个弹幕设置 transition 可以保证每个弹幕的速度相同 这里没有保证速度相同
+        dom.style.transition = `transform ${0.0084 * (dom.clientWidth + player.clientWidth)}s linear`;
+
+        // 设置弹幕的位置信息 性能优化 left -> transform
+        dom.style.transform = `translateX(${-dom.clientWidth - player.clientWidth}px)`;
+        dom.style.willChange = 'transform';
+        dom.className = 'left';
+    }
+
+    function shoottopdownDanmu(dom, arrpJson, channel) { //1.11.5 格式化居然把这function丢失了
+        dom.innerText = arrpJson.text;
+        dom.name = new Date().getTime();
+        console.log(' biu2~ [' + arrpJson.text + ']');
+        let num16 = parseInt(arrpJson.rgb).toString(16);
+        dom.style.fontSize = arrpJson.size + 'px';
+        dom.style.color = '#' + (Array(6).join(0) + num16).slice(-6);
+
+        //dom.style.transform = `translateX(${(player.clientWidth - dom.clientWidth) / 2}px)`;
+        dom.style.left = `${(player.clientWidth - dom.clientWidth) / 2}px`;
+    }
+
+    var $ = $ || window.$;
+
+    /**
+     * 共有方法
+     */
+    function commonFunction() {
+        this.GMgetValue = function (name, value) { //得到存在本地的数据
+            return GM_getValue(name, value);
+        };
+        this.GMsetValue = function (name, value) { //设置存在本地的数据
+            return GM_setValue(name, value);
+        };
+        this.addScript = function (url) { //添加脚本
+            var s = document.createElement('script');
+            s.setAttribute('src', url);
+            document.body.appendChild(s);
+        };
+    }
+
+    //全局统一变量
+    const commonFunctionObject = new commonFunction();
+
+    /**
+     * 超级解析助手
+     * @param {Object} originalInterfaceList
+     * @param {Object} playerNodes
+     */
+    function superVideoHelper() {
+        this.originalInterfaceList = originalInterfaceList;
+        this.node = "#player_module";
+
+
+        this.innerParse = function (url) { //内嵌解析
+            $("#iframe-player").attr("src", url);
+        };
+
+        this.operatOther = function () {
+            switch (window.location.host) {
+                case 'www.bilibili.com':
+                    receiveInfoFromAnotherDomain();
+                    //this.addHtmlElements();
+                    //console.log("检测是否为vip视频");
+                    let findviptime = new Date().getTime();
+                    let waitlimit = setInterval(() => {
+                        let viptextArr = [$(".bpx-player-toast-confirm").text(), $(".twp-title").text(), $(".video-float-hint-btn.hint-red").text(), $('.new-twp-btn.right.vip.blue').children('.current').text()];
+                        let vipmatchArr = ['成为大会员', '付费观看', '成为大会员抢先看', '开通大会员观看'];
+                        //let arr2=['成为大会员', '开通大会员观看','正在观看预览，大会员免费看全片', '正在观看预览，付费观看完整版']
+                        let intersection = viptextArr.filter(item => new Set(vipmatchArr).has(item))
+                        //console.log(arr1,arr2,intersection);
+                        if (intersection.length != 0) {
+                            console.log("是vip视频");
+                            this.videoreplace();
+                            clearInterval(waitlimit);
+                        }
+                        if (new Date().getTime() - findviptime >= 5000) {
+                            clearInterval(waitlimit)
+                        }
+                    },
+                        250);
+                    //1.12.1 预防不能解锁vip视频的情况
+                    //this.bottomArea()
+                    this.addHtmlElements()
+                    break
+                default:
+                    try {
+                        detecH5Player(new Date().getTime())
+                    } catch (err) {
+                        console.log('h5:' + err)
+                    }
+                    break
+            }
+        }
+
+        this.videoreplace = function () {
+            //let safediv = window.document.querySelector("#player_placeholder")
+            //1.11.6 修复m1907存在滚动条(才发现是滚动条) 修复基础不扎实且手贱导致的全屏问题
+            let videoPlayer = $("<div id='iframe-play-div' style='width:100%;height:92.675%;z-index:1000;'><iframe id='iframe-player' allowfullscreen='true' frameborder='0' width='100%' height='100%' scrolling='no'></iframe></div>");
+            let index = commonFunctionObject.GMgetValue("index");
+            //1.12.1 修复接口记忆
+            if (index == null) {
+                index = '0'
+                commonFunctionObject.GMsetValue("index", '0');
+            }
+
+            let url2 = this.originalInterfaceList[index].url + window.location.href;
+            //console.log(index, url2);
+            if (document.getElementById("iframe-player") == null) {
+                //1.11.5 尝试修复多重视频声音 www.cnblogs.com/dzyany/p/14187782.html
+                let playerb = document.querySelector('video');
+                if (playerb) {
+                    playerb.pause();
+                    //console.log('playerb.pause');
+                    playerb.addEventListener('timeupdate', function () {
+                        playerb.pause();
+                        console.log('3playerb.pause');
+                    })
+                    playerb.removeAttribute('src');
+                    playerb.currentSrc = '';
+                    playerb.innerHTML = '';
+                }
+
+                let playera = $(this.node);
+                //console.log(playera)
+                playera.empty();
+
+                playera.append(videoPlayer);
+
+                //1.11.5添加底部区域 1.11.8修复底栏层次问题
+                this.bottomArea()
+            }
+            this.innerParse(url2);
+            //1.11.5 修复移除vip提示bug
+            let removetime = new Date().getTime();
+            let waitlimit = setInterval(() => {
+                $(".player-limit-mask").remove();
+                $(".player-limit-mask pay").remove();
+                $(".twp-container").remove();
+                $(".twp-mask.twp-float").remove();
+                if (new Date().getTime() - removetime >= 5000) {
+                    clearInterval(waitlimit)
+                }
+            },
+                250);
+        }
+
+        this.addHtmlElements = function () {
+            var vipVideoImageBase64 = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAC9klEQVRoQ+2ZPWgVQRDH/7/CWqOIYOFHFbRSjJhGMGDpByoIago70cqvUtQgdipWFqawMWghGIidhcHKQAJqEURBRfED1CCCjc3IPu4em31775J7d3m8cAtX3O7szP7nPzszx6EeH/T4+VUD6DaDTQbMbE+3D7MY+8Ckkw8BPFuMki7KDtUAuuh9Z3oZMtBljxY2X9eBwq4raWPNQEmOLKxm+TBgZqsknQ1dAVzNco+ZhWsm6ZakHZLC1mQyrZ5OX2RvzMxnSa8lzQJ/YwLzGDCze5JOeoI/gbVtAMxJ6vPW7wKnkr4qbEuaxccDcGWBsfNV0mjMmSGAg5LGA6XbgFehITPbLel5MN84ZAUAUjMPgWO+zZY7YGbvJW0OvRoB8EjSEW9+BhhIvOvCp0wGfPPbgZfpRAzATUnn56GEmJyLd39cBNxeF99FADTa42BskuQef4wDh9oB2CXpRbDpMPA4nTOz05LuBDLrgW+dAACGIkxfkHTDm/8DrMwEkBxgOskkqdwEcMAD4GLf3YF0PACOe+uFGMgA4Bj4EAAbAGbcXLQOmNklSdeCTRuBT2bWL+lNsLYfeFIRgH2SJgJ7GwCXYjMBrJb0K9jUiHEzG5F02VubA9b4skXvQMiAmW2VdFSSn24/As0kk1mJzeyppL3ewaaBnWY2K2mLNz8S5ueCAMLwz3q/DZxreweSe3BC0v1Ai7tkYXrsB96WwMBCAfQBv3MBJCD+SVrhaXaZ54z3PgUMhpYrZKCF7bbNnJk5BhwT6fghyW8thoGxigE4my6tXwemQlt5AGI1oamDSIFLmCuURiW5BOGPL8C7drGV206b2XdJ6yJKxoDhmPKCIeS61ZZClncxFgLAtcyxrnEwRmknDFQFIFYTWnJ/CVmoGgYSj7Z81OR86Lg7sOgPmnY6s0IpN4TyYrDb6zWAmoEOPVCHUIcO7Hh7/YemYxcWU7AMf3BkNGDF/FP9rkwGqjddkoWWv5Ql6V1yNXUdWHKXBwZ7noH/dP+HQNqheToAAAAASUVORK5CYII=`;
+            var category_1_html = "";
+            this.originalInterfaceList.forEach((item, index) => {
+                if (item.category === "1") {
+                    category_1_html += "<li title='" + item.name + "' data-index='" + index + "'>" + item.name + "</li>";
+                }
+            });
+
+            //获得自定义位置
+            var left = 0;
+            var top = 100;
+            var cssMould = `#vip_movie_box {cursor:pointer; position:fixed; top:` + top + `px; left:` + left + `px; width:0px; z-index:2147483647; font-size:16px; text-align:left;}
+                                  #vip_movie_box .item_text {}
+                                  #vip_movie_box .item_text .img_box{width:26px; height:35px;line-height:35px;text-align:center;background-color:#E5212E;}
+                                  #vip_movie_box .item_text .img_box >img {width:20px; display:inline-block; vertical-align:middle;}
+                                  #vip_movie_box .vip_mod_box_action {display:none; position:absolute; left:26px; top:0; text-align:center; background-color:#272930; border:1px solid gray;}
+                                  #vip_movie_box .vip_mod_box_action li{border-radius:2px; font-size:12px; color:#DCDCDC; text-align:center; width:60px; line-height:21px; float:left; border:1px solid gray; padding:0 4px; margin:4px 2px;overflow:hidden;white-space: nowrap;text-overflow: ellipsis;-o-text-overflow:ellipsis;}
+                                  #vip_movie_box .vip_mod_box_action li:hover{color:#E5212E; border:1px solid #E5212E;}
+                                  
+                                  #vip_movie_box li.selected{color:#E5212E; border:1px solid #E5212E;}
+                                  
+                                  
+                                  #vip_movie_box .selected_text {margin-top:5px;}
+                                  #vip_movie_box .selected_text .img_box{width:26px; height:35px;line-height:35px;text-align:center;background-color:#E5212E;}
+                                  #vip_movie_box .selected_text .img_box >img {width:20px; height:20px;display:inline-block; vertical-align:middle;}
+                                  #vip_movie_box .vip_mod_box_selected {display:none;position:absolute; left:26px; top:0; text-align:center; background-color:#F5F6CE; border:1px solid gray;}
+                                  #vip_movie_box .vip_mod_box_selected ul{overflow-y: auto;}
+                                  #vip_movie_box .vip_mod_box_selected li{border-radius:2px; font-size:12px; color:#393AE6; text-align:center; width:95px; line-height:27px; float:left; border:1px dashed gray; padding:0 4px; margin:4px 2px;display:block;white-space: nowrap;overflow: hidden;text-overflow: ellipsis;}
+                                  #vip_movie_box .vip_mod_box_selected li:hover{color:#E5212E; border:1px solid #E5212E;}
+                                                              
+                                  #vip_movie_box .default-scrollbar-55678::-webkit-scrollbar{width:5px; height:1px;}
+                                  #vip_movie_box .default-scrollbar-55678::-webkit-scrollbar-thumb{box-shadow:inset 0 0 5px rgba(0, 0, 0, 0.2); background:#A8A8A8;}
+                                  #vip_movie_box .default-scrollbar-55678::-webkit-scrollbar-track{box-shadow:inset 0 0 5px rgba(0, 0, 0, 0.2); background:#F1F1F1;}
+                                  `;
+            GM_addStyle(cssMould);
+
+            var htmlMould = `<div id='vip_movie_box'>
+                  <div class='item_text'>
+                      <div class="img_box" id="img_box_6667897iio"><img src='` + vipVideoImageBase64 + `' title='点击跳转到综合解析页面，线路随意选！'/></div>
+                          <div class='vip_mod_box_action' >
+                              <div style='display:flex;'>
+                                  <div style='padding:10px 0px; width:380px; max-height:400px; overflow-y:auto;'  class="default-scrollbar-55678">
+                                      <div style='font-size:16px; text-align:center; color:#E5212E; padding:5px 0px;'><b>线路</b></div>
+                                      <ul>` + category_1_html + `<div style='clear:both;'></div></ul>
+                                  </div>
+                              </div>
+                          </div>	
+                      </div>
+                  </div>`;
+            $("body").append(htmlMould);
+            $(".item_text").on("mouseover", () => {
+                $(".vip_mod_box_action").show();
+            });
+            $(".item_text").on("mouseout", () => {
+                $(".vip_mod_box_action").hide();
+            });
+            $(".vip_mod_box_action li").each((liIndex, item) => {
+                item.addEventListener("click", () => {
+                    //1.11.5同一操作
+                    var index = parseInt($(item).attr("data-index"));
+                    commonFunctionObject.GMsetValue("index", index);
+                    this.videoreplace();
+                });
+            });
+        };
+
+        this.bottomArea = function () {
+            $('#vip_movie_box').remove();
+            let playera = $(this.node);
+            //1.11.5添加bottomArea
+            let bottomcss = `    /*底部背景阴影*/
+        .bilibili-player-video-bottom-area {
+            width: 100%;
+            height: 46px;
+            background-color: #fff;
+            -webkit-box-shadow: 0 0 8px #e5e9ef;
+            box-shadow: 0 0 8px #e5e9ef;
+            -ms-flex-negative: 0;
+            flex-shrink: 0;
+            position: relative;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+        }
+  
+        /*1.11.8修复偏移*/
+        .bilibili-player-video-bottom-area::before {
+          content: none
+        }
+    
+        /*弹幕字体*/
+        .bilibili-player-video-info-danmaku-number {
+            height: 14px;
+            line-height: 14px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+    
+        /*视频信息文本格式*/
+        .bilibili-player-video-info {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-flex: 0;
+            -ms-flex: none;
+            flex: none;
+            -ms-flex-negative: 1;
+            flex-shrink: 1;
+            font-size: 12px;
+            height: 16px;
+            line-height: 14px;
+            color: #505050;
+            -webkit-box-pack: start;
+            -ms-flex-pack: start;
+            justify-content: flex-start;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            margin-right: 12px;
+            width: 208px;
+            white-space: nowrap;
+            -webkit-box-align: end;
+            -ms-flex-align: end;
+            align-items: flex-end;
+            overflow: hidden;
+            padding: 0 12px 0 20px;
+        }
+    
+        /*弹幕按钮本体*/
+        .bui-switch .bui-switch-input {
+            position: absolute;
+            width: 30px;
+            height: 20px;
+            border-radius: 10px;
+            opacity: 0;
+            margin: 0;
+            cursor: pointer;
+            z-index: 1;
+        }
+    
+        /*弹幕按钮主体*/
+        .bui-switch .bui-switch-body {
+            display: inline-block;
+            width: 30px;
+            height: 20px;
+            outline: none;
+            border-radius: 10px;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+            background: #757575;
+            margin-right: 11px;
+        }
+    
+        .bui-switch .bui-switch-input:checked+.bui-switch-label .bui-switch-body {
+            background: #00a1d6;
+        }
+    
+        /*弹幕按钮dot*/
+        .bui-switch .bui-switch-dot {
+            top: 2px;
+            left: 2px;
+            border-radius: 100%;
+            width: 16px;
+            height: 16px;
+            background-color: #fff;
+            color: #757575;
+            fill: #757575;
+            line-height: 16px;
+            text-align: center;
+            -webkit-box-shadow: 0 3px 1px 0 rgba(0, 0, 0, .05), 0 2px 2px 0 rgba(0, 0, 0, .1), 0 3px 3px 0 rgba(0, 0, 0, .05);
+            box-shadow: 0 3px 1px 0 rgba(0, 0, 0, .05), 0 2px 2px 0 rgba(0, 0, 0, .1), 0 3px 3px 0 rgba(0, 0, 0, .05);
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            justify-content: center;
+        }
+    
+        .bui-switch .bui-switch-body,
+        .bui-switch .bui-switch-dot {
+            position: relative;
+            -webkit-transition: all .3s;
+            -o-transition: all .3s;
+            transition: all .3s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+    
+        .bui-switch .bui-switch-input:checked+.bui-switch-label .bui-switch-body .bui-switch-dot {
+            left: 100%;
+            margin-left: -18px;
+            color: #00a1d6;
+            fill: #00a1d6;
+        }
+    
+        /*弹幕按钮图片*/
+        .bui-switch .bui-switch-dot span {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            font-size: 0;
+        }
+    
+    
+    
+        /*弹幕设置*/
+        /*bui*/
+        .bui-panel.bui-dark {
+            border: none;
+            background: rgba(0, 0, 0, .67);
+        }
+    
+        .bui-panel {
+            -webkit-box-pack: start;
+            -ms-flex-pack: start;
+            justify-content: flex-start;
+            border-radius: 4px 4px 0 0;
+            border: 1px solid #e2e2e2;
+            background: #fff;
+            overflow: hidden;
+        }
+    
+        .bui {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            vertical-align: middle;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            justify-content: center;
+        }
+    
+        .bui-panel-wrap {
+            position: relative;
+            -webkit-transition: all .25s;
+            -o-transition: all .25s;
+            transition: all .25s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+    
+        .bui-panel-move {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: end;
+            -ms-flex-align: end;
+            align-items: flex-end;
+            height: 100%;
+            -webkit-transform: translateX(0);
+            transform: translateX(0);
+            -webkit-transition: -webkit-transform .25s;
+            transition: -webkit-transform .25s;
+            -o-transition: transform .25s;
+            transition: transform .25s;
+            transition: transform .25s, -webkit-transform .25s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+    
+        /*滑动条*/
+        .bui-slider {
+            height: 12px;
+            cursor: pointer;
+        }
+    
+        .bui-slider .bui-track {
+            position: relative;
+            width: 100%;
+            height: 2px;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+        }
+    
+        .bui-slider.bui-dark .bui-track .bui-bar-wrap,
+        .bui-slider.bui-dark .bui-track .bui-step .bui-step-item .bui-step-dot {
+            background: #505050;
+        }
+    
+        .bui-slider .bui-track .bui-bar-wrap {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            border-radius: 1.5px;
+            overflow: hidden;
+            background: #e7e7e7;
+        }
+    
+        .bui-slider .bui-track .bui-bar-wrap .bui-bar,
+        .bui-slider .bui-track.bui-track-vertical .bui-bar-wrap .bui-bar {
+            background: #00a1d6;
+            background: var(--bpx-primary-color, #00a1d6);
+        }
+    
+        .bui-slider .bui-track .bui-bar-wrap .bui-bar {
+            position: absolute;
+            -webkit-transform-origin: 0 0;
+            transform-origin: 0 0;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #00a1d6;
+            will-change: transform;
+        }
+    
+        .bui-slider .bui-track .bui-thumb {
+            pointer-events: none;
+            cursor: pointer;
+        }
+    
+        .bui-slider .bui-track .bui-step {
+            pointer-events: none;
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item {
+            position: absolute;
+            width: 0;
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item .bui-step-dot {
+            height: 4px;
+            width: 2px;
+            background: #e5e9ef;
+            border-radius: 1px;
+            -webkit-transform: translate(-50%, -50%);
+            transform: translate(-50%, -50%);
+        }
+    
+    
+        .bui-slider.bui-dark .bui-track .bui-bar-wrap,
+        .bui-slider.bui-dark .bui-track .bui-step .bui-step-item .bui-step-dot {
+            background: #505050;
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item.bui-step-item-0 .bui-step-dot {
+            -webkit-transform: translateY(-50%);
+            transform: translateY(-50%);
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item.bui-step-item-100 .bui-step-dot {
+            -webkit-transform: translate(-100%, -50%);
+            transform: translate(-100%, -50%);
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item .bui-step-text {
+            position: absolute;
+            bottom: 6px;
+            left: 50%;
+            width: 100px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            -webkit-transform: translate(-50%, -50%);
+            transform: translate(-50%, -50%);
+            line-height: 12px;
+        }
+    
+        .bui-slider.bui-dark .bui-track .bui-step .bui-step-item .bui-step-text {
+            color: hsla(0, 0%, 100%, .8);
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item.bui-step-item-0 .bui-step-text {
+            text-align: left;
+            -webkit-transform: translateY(-50%);
+            transform: translateY(-50%);
+        }
+    
+        .bui-slider .bui-track .bui-step .bui-step-item.bui-step-item-100 .bui-step-text {
+            -webkit-transform: translate(-100%, -50%);
+            transform: translate(-100%, -50%);
+            text-align: right;
+        }
+    
+        .bui-slider .bui-track .bui-thumb .bui-thumb-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #00a1d6;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            vertical-align: middle;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+        }
+    
+        .bui-slider .bui-track .bui-thumb .bui-thumb-tooltip {
+            position: absolute;
+            top: -21px;
+            left: 50%;
+            -webkit-transform: translateX(-50%);
+            transform: translateX(-50%);
+            padding: 0 7px;
+            line-height: 18px;
+            height: 18px;
+            font-size: 12px;
+            background: rgba(21, 21, 21, .8);
+            border-radius: 4px;
+            color: #fff;
+            opacity: 0;
+            -webkit-transition: opacity .2s ease-in-out;
+            -o-transition: opacity .2s ease-in-out;
+            transition: opacity .2s ease-in-out;
+            pointer-events: none;
+        }
+    
+        /*选择框*/
+        .bui-checkbox {
+            display: -webkit-inline-box;
+            display: -ms-inline-flexbox;
+            display: inline-flex;
+            position: relative;
+            cursor: pointer;
+            -webkit-box-pack: start;
+            -ms-flex-pack: start;
+            justify-content: flex-start;
+        }
+    
+        .bilibili-player .bui-checkbox .bui-checkbox-input:checked+.bui-checkbox-label .bui-checkbox-icon svg,
+        .bilibili-player .bui-checkbox:hover .bui-checkbox-icon svg {
+            fill: #00a1d6;
+            fill: var(--bpx-primary-color, #00a1d6)
+        }
+    
+        .bui-checkbox .bui-checkbox-input {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            margin: 0;
+            cursor: pointer;
+            z-index: 1;
+        }
+    
+        .bui-checkbox .bui-checkbox-label {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            vertical-align: middle;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            justify-content: center;
+        }
+    
+        .bui-checkbox .bui-checkbox-icon {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+    
+        .bui-checkbox .bui-checkbox-icon svg {
+            vertical-align: top;
+            fill: #ccd0d7;
+            -webkit-transition: all .2s;
+            -o-transition: all .2s;
+            transition: all .2s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+            width: 16px;
+            height: 16px;
+        }
+    
+        .bui-checkbox.bui-dark .bui-checkbox-icon svg {
+            fill: #fff;
+        }
+    
+        .bui-checkbox .bui-checkbox-input:checked+.bui-checkbox-label .bui-checkbox-icon svg,
+        .bui-checkbox:hover .bui-checkbox-icon svg {
+            fill: #00a1d6;
+            fill: var(--bpx-primary-color, #00a1d6);
+        }
+    
+        .bui-checkbox .bui-checkbox-input:checked+.bui-checkbox-label .bui-checkbox-icon svg {
+            fill: #00a1d6;
+        }
+    
+        .bui-checkbox .bui-checkbox-input:checked+.bui-checkbox-label .bui-checkbox-icon-default {
+            display: none;
+        }
+    
+        .bui-checkbox .bui-checkbox-input:checked+.bui-checkbox-label .bui-checkbox-icon-selected {
+            display: inline-block;
+        }
+    
+        .bui-checkbox .bui-checkbox-icon-selected {
+            display: none;
+        }
+    
+        .bui-checkbox .bui-checkbox-name {
+            vertical-align: middle;
+            font-size: 12px;
+            line-height: 12px;
+            color: #222;
+            -webkit-transition: all .2s;
+            -o-transition: all .2s;
+            transition: all .2s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+            position: relative;
+        }
+    
+        .bui-checkbox.bui-dark .bui-checkbox-name {
+            color: #fff;
+        }
+    
+        .bui-checkbox:hover .bui-checkbox-name {
+            color: #00a1d6;
+            color: var(--bpx-primary-color, #00a1d6)
+        }
+    
+        .bilibili-player-video-danmaku-setting:hover .bui-panel-item.bui-panel-item-active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+    
+        .bui-panel-item {
+            opacity: 0;
+            pointer-events: none;
+            -webkit-transition: opacity .1s;
+            -o-transition: opacity .1s;
+            transition: opacity .1s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+    
+        /*设置主体*/
+        .bilibili-player-video-danmaku-setting {
+            fill: #757575;
+            font-size: 0;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            position: relative;
+            width: 30px;
+            height: 64px;
+            line-height: 30px;
+            margin-right: 11px;
+            color: #fff;
+            top: 45%;
+            transform: translate(0, -50%);
+            user-select: none;
+        }
+    
+        /*设置图标*/
+        .bilibili-player-video-danmaku-setting .bp-svgicon span {
+            display: inline-block;
+            width: 24px;
+            font-size: 0;
+            position: absolute;
+            cursor: pointer;
+            z-index: 1;
+            margin: middle;
+        }
+    
+        .bilibili-player-video-danmaku-setting:hover .bp-svgicon span {
+            color: #00a1d6;
+            fill: #00a1d6;
+        }
+    
+        /*设置显示提示*/
+        .bilibili-player-video-danmaku-setting:hover .bilibili-player-video-danmaku-setting-wrap {
+            display: inline-block;
+        }
+    
+        .bilibili-player-video-danmaku-setting-wrap {
+            display: none;
+            cursor: default;
+            background: none;
+            border: none;
+            border-radius: 4px 4px 0 0;
+            text-align: left;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+            width: 298px;
+            height: 366px;
+            font-size: 12px;
+            z-index: 1001;
+    
+            /* 定位 */
+            position: absolute;
+            bottom: 10px;
+            /* 46px */
+            right: -149px;
+            /*-149px */
+            /*margin-left: 0px;*/
+        }
+    
+        .bilibili-player-video-danmaku-setting-box {
+            position: absolute;
+            right: 0;
+            bottom: 35px;
+        }
+    
+        .bilibili-player-video-danmaku-setting-box {
+            background: rgba(21, 21, 21, .9) !important;
+            border-radius: 2px !important;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left {
+            width: 100%;
+            height: 100%;
+            padding: 12px 20px;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+        }
+    
+        /*选项大致*/
+        .bilibili-player-video-danmaku-setting-left-area,
+        .bilibili-player-video-danmaku-setting-left-fontsize,
+        .bilibili-player-video-danmaku-setting-left-opacity,
+        .bilibili-player-video-danmaku-setting-left-speedplus {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            width: 100%;
+            height: 16px;
+            line-height: 16px;
+            margin-bottom: 24px;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-area-title,
+        .bilibili-player-video-danmaku-setting-left-block-title,
+        .bilibili-player-video-danmaku-setting-left-fontsize-title,
+        .bilibili-player-video-danmaku-setting-left-opacity-title,
+        .bilibili-player-video-danmaku-setting-left-speedplus-title {
+            text-align: left;
+            height: 16px;
+            line-height: 16px;
+            margin-bottom: 4px;
+            color: #fff;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-area-content,
+        .bilibili-player-video-danmaku-setting-left-fontsize-content,
+        .bilibili-player-video-danmaku-setting-left-opacity-content,
+        .bilibili-player-video-danmaku-setting-left-speedplus-content {
+            -webkit-box-flex: 1;
+            -ms-flex: 1;
+            flex: 1;
+            width: 200px;
+            height: 12px;
+            margin-left: 10px;
+        }
+    
+        /*选择框细节*/
+        .bilibili-player-video-danmaku-setting-left-danmaku-density,
+        .bilibili-player-video-danmaku-setting-left-danmaku-mask,
+        .bilibili-player-video-danmaku-setting-left-preventshade {
+            margin-bottom: 12px;
+            height: 16px;
+            line-height: 16px;
+            float: left;
+            color: #212121;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-danmaku-density,
+        .bilibili-player-video-danmaku-setting-left-danmaku-mask {
+            margin-left: 10px;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-danmaku-density label:hover,
+        .bilibili-player-video-danmaku-setting-left-danmaku-density label:hover .bpui-icon-checkbox.icon-12checkbox,
+        .bilibili-player-video-danmaku-setting-left-danmaku-mask label:hover,
+        .bilibili-player-video-danmaku-setting-left-danmaku-mask label:hover .bpui-icon-checkbox.icon-12checkbox,
+        .bilibili-player-video-danmaku-setting-left-preventshade label:hover,
+        .bilibili-player-video-danmaku-setting-left-preventshade label:hover .bpui-icon-checkbox.icon-12checkbox {
+            -webkit-box-shadow: none !important;
+            box-shadow: none !important
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-danmaku-density:hover .bpui-checkbox-text,
+        .bilibili-player-video-danmaku-setting-left-danmaku-mask:hover .bpui-checkbox-text,
+        .bilibili-player-video-danmaku-setting-left-preventshade:hover .bpui-checkbox-text {
+            color: #00a1d6
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-danmaku-density:hover .bpui-icon-checkbox.icon-12checkbox,
+        .bilibili-player-video-danmaku-setting-left-danmaku-mask:hover .bpui-icon-checkbox.icon-12checkbox,
+        .bilibili-player-video-danmaku-setting-left-preventshade:hover .bpui-icon-checkbox.icon-12checkbox {
+            -webkit-box-shadow: none;
+            box-shadow: none;
+            border: 1px solid #00a1d6
+        }
+    
+        /*block*/
+        .bilibili-player-video-danmaku-setting-left-block {
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+    
+        /*第一行打横*/
+        .bilibili-player-video-danmaku-setting-left-block-content {
+            position: relative;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+            height: 42px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+    
+        /*第一行图标行距*/
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type {
+            position: relative;
+            width: 28px;
+            height: 100%;
+            margin: 0 22px 16px 0;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+            color: hsla(0, 0%, 100%, .8);
+            -webkit-transition: all .2s ease-in-out;
+            transition: all .2s ease-in-out;
+        }
+    
+        /*第一行图标字体上色*/
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type .bilibili-player-block-filter-image {
+            /*position: relative;*/
+            display: inline-block;
+            font-size: 0;
+            width: 28px;
+            height: 28px;
+            line-height: 28px;
+            top: -5px;
+            color: hsla(0, 0%, 100%, .8);
+            fill: hsla(0, 0%, 100%, .8);
+        }
+
+        /*ban弹幕图标字体*/
+        .bilibili-player-block-filter-type.bpx-player-active .bilibili-player-block-filter-label {
+            color: #00a1d6!important;
+            color: var(--bpx-fn-color,#00a1d6)!important;
+        }
+        
+        /*ban弹幕图标上色*/
+        .bilibili-player-block-filter-type.bpx-player-active .bilibili-player-block-filter-image {
+            color: #00a1d6!important;
+            color: var(--bpx-fn-color,#00a1d6)!important;
+            fill: #00a1d6!important;
+            fill: var(--bpx-fn-color,#00a1d6)!important;
+        }
+    
+    
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type .bilibili-player-block-filter-label {
+            position: absolute;
+            left: 0;
+            bottom: -2px;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+            width: 100%;
+            height: 16px;
+            padding: 0;
+            margin: 0;
+            text-align: center;
+            line-height: 16px;
+            color: hsla(0, 0%, 100%, .8);
+            font-size: 12px;
+            -webkit-transition: none;
+            transition: none;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type:hover .bilibili-player-block-filter-image {
+            color: #fff;
+            fill: #fff
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type:hover .bilibili-player-block-filter-label {
+            color: #fff
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type.disabled .bilibili-player-block-filter-image {
+            color: #00a1d6 !important;
+            fill: #00a1d6 !important
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-block-content .bilibili-player-block-filter-type.disabled .bilibili-player-block-filter-label {
+            color: #00a1d6 !important
+        }
+    
+        /*flag*/
+        .bilibili-player-video-danmaku-setting-left-flag {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            margin-bottom: 12px;
+            font-size: 12px;
+            line-height: 16px;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-flag-title {
+            -webkit-box-flex: 0;
+            -ms-flex: none;
+            flex: none
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-flag-content {
+            width: 100%;
+            margin-left: 10px;
+            padding-top: 2px;
+            opacity: 1
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-flag-content .bui-step {
+            display: none
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-flag.bilibili-player-unchecked .bilibili-player-video-danmaku-setting-left-flag-content {
+            position: relative
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-flag.bilibili-player-unchecked .bilibili-player-video-danmaku-setting-left-flag-content .bilibili-player-setting-flag {
+            opacity: 0
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-flag.bilibili-player-unchecked .bilibili-player-video-danmaku-setting-left-flag-content:after {
+            display: inline-block;
+            content: "全站视频将按等级屏蔽弹幕";
+            position: absolute;
+            top: 0;
+            left: 0;
+            color: #999
+        }
+    
+        /*fontsize*/
+        .bilibili-player-video-danmaku-setting-left-fontsize {
+            margin-bottom: 12px;
+        }
+    
+        /*preventshade*/
+        .bilibili-player-video-danmaku-setting-left-preventshade {
+            clear: left;
+            margin-bottom: 14px;
+        }
+    
+        /*block-word按钮*/
+        .bilibili-player-video-danmaku-setting-left-block-word {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            width: 100%;
+            line-height: 24px;
+            -webkit-box-pack: justify;
+            -ms-flex-pack: justify;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-block-word .bilibili-player-video-danmaku-setting-left-block-add,
+        .bilibili-player-video-danmaku-setting-left-block-word .bilibili-player-video-danmaku-setting-left-block-sync {
+            width: 126px;
+            border-radius: 2px;
+            background: hsla(0, 0%, 100%, .3);
+            cursor: pointer;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-block-word .bilibili-player-video-danmaku-setting-left-block-add:hover,
+        .bilibili-player-video-danmaku-setting-left-block-word .bilibili-player-video-danmaku-setting-left-block-sync:hover {
+            background: hsla(0, 0%, 100%, .4);
+        }
+    
+        /*更多设置*/
+        .bilibili-player-video-danmaku-setting-left-more {
+            clear: left;
+            color: #fff;
+            fill: #fff;
+            line-height: 16px;
+            height: 16px;
+            text-align: left;
+            cursor: pointer;
+            position: relative;
+            top: 4px;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-more:hover,
+        .bilibili-player-video-danmaku-setting-left-more:hover .bp-svgicon {
+            color: #00a1d6;
+            fill: #00a1d6;
+        }
+    
+        /*箭头*/
+        .bilibili-player-video-danmaku-setting-left-more .bp-svgicon {
+            position: absolute;
+            right: 0;
+            height: 16px;
+            width: 16px;
+            vertical-align: middle;
+            margin-right: -3px;
+        }
+    
+        .bilibili-player-video-danmaku-setting-left-more-text {
+            vertical-align: middle;
+            display: inline-block;
+            -webkit-transition: color .3s;
+            transition: color .3s;
+        }
+    
+    
+        /*线路整体*/
+        .bilibili-player-video-btn.bilibili-player-video-btn-quality {
+    
+            fill: #757575;
+            font-size: 0;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            position: relative;
+            width: auto;
+            height: 64px;
+            line-height: 30px;
+            margin-right: 11px;
+            color: #fff;
+            /*top: 5px;*/
+            user-select: none;
+        }
+    
+        /*hover*/
+        .bilibili-player-video-btn-quality:hover .bui-select.bui-select-quality-menu .bui-select-list {
+            opacity: 1;
+            display: block;
+            visibility: visible;
+        }
+    
+        /*.bilibili-player-video-btn-quality:hover .bui-select.bui-select-quality-menu .bui-select-result {
+            background: #00a1d6;
+        }*/
+    
+        .bui-select .bui-select-item:hover {
+            background: #e7e7e7;
+        }
+    
+        .bui-select.bui-dark .bui-select-item:hover {
+            background: hsla(0, 0%, 100%, .1);
+        }
+    
+        /*list*/
+        .bui-select.bui-select-quality-menu .bui-select-list {
+            font-size: 12px;
+            width: 169px;
+            height: auto !important;
+            text-align: left;
+            background: rgba(21, 21, 21, .9);
+            border-radius: 2px;
+            padding: 0;
+    
+            -webkit-transition: all .2s;
+            -o-transition: all .2s;
+            transition: all .2s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+    
+            position: absolute;
+            /* 定位 */
+            z-index: 1;
+            bottom: 35px;
+            left: 50%;
+            margin-left: -84.5px;
+  
+            opacity: 0;
+            display: none;
+    
+  
+        }
+    
+        /*表面*/
+        .bui-select.bui-select-quality-menu .bui-select-result {
+            /*background: #757575;*/
+            background-color: rgb(251, 114, 153);
+            border-radius: 5px;
+            /* font-weight: 600; */
+            width: 100%;
+            user-select: none;
+            cursor: pointer;
+            display: block;
+            padding: 0 2px;
+            text-align: center;
+            color: #fff;
+            font-size: 12px;
+            height: 16px;
+            line-height: 16px;
+        }
+    
+        /*选项格式*/
+        .bilibili-player-video-quality-menu .bui-select-list .bui-select-item {
+            padding: 0 12px;
+            height: 36px;
+            line-height: 36px;
+            white-space: nowrap;
+            color: #fff;
+            cursor: pointer
+        }
+    
+        .bilibili-player-video-subtitle-setting-color .bui-select-item>span,
+        .bilibili-player-video-subtitle-setting-color .bui-select-result>span {
+            vertical-align: middle
+        }
+    
+        .bilibili-player-video-subtitle-setting-color .bui-select-item>span:first-child,
+        .bilibili-player-video-subtitle-setting-color .bui-select-result>span:first-child {
+            width: 12px;
+            height: 12px;
+            display: inline-block;
+            border-radius: 2px;
+            margin-right: 8px
+        }
+    
+        .bui-select.bui-select-quality-menu .bui-select-item.bui-select-item-active {
+            color: #00a1d6;
+        }
+    
+        .bilibili-player-video-btn .bilibili-player-video-quality-menu .bilibili-player-bigvip {
+            position: relative;
+            color: #fff;
+            background-color: #f25d8e;
+            margin-left: 27px;
+            padding: 0 5px;
+            border-radius: 8px;
+            height: 16px;
+            line-height: 16px;
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+            user-select: none;
+            float: right;
+            top: 28%;
+        }
+    
+        /*文本*/
+        .bilibili-player-video-quality-text {
+            user-select: none;
+        }`
+
+            GM_addStyle(bottomcss);
+
+            //1.11.8 接口
+            let category_1_html = "";
+            originalInterfaceList.forEach((item, index) => {
+                if (item.category == "1" && item.special) {
+                    category_1_html += `<li class="bui-select-item" data-index=` + index + `><span class="bilibili-player-video-quality-text">` + item.name + `</span><span class="bilibili-player-bigvip">` + item.special + `</span></li>`;
+                } else {
+                    category_1_html += `<li class="bui-select-item" data-index=` + index + `><span class="bilibili-player-video-quality-text">` + item.name + `</span></li>`;
+                }
+            });
+
+
+            let bottomdiv = `
+        <div class="bilibili-player-video-bottom-area">
+        <div class="bilibili-player-video-info">
+            <div class="bilibili-player-video-info-danmaku player-tooltips-trigger">
+                <span class="bilibili-player-video-info-danmaku-number"></span>
+                <span class="bilibili-player-video-info-danmaku-text">条弹幕存在此弹幕池</span>
+            </div>
+        </div>
+        <div class="bui-switch" aria-label="弹幕显示隐藏">
+            <input class="bui-switch-input" type="checkbox" checked="">
+            <label class="bui-switch-label">
+                <span class="bui-switch-name"></span>
+                <span class="bui-switch-body">
+                    <span class="bui-switch-dot">
+                        <span><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+                                <path
+                                    d="M1.311 3.759l-.153 1.438h2.186c0 1.832-.066 3.056-.175 3.674-.131.618-.688.959-1.683 1.023-.284 0-.568-.021-.874-.043L.317 8.818c.284.032.59.053.896.053.546 0 .852-.17.929-.511.077-.341.12-1.076.12-2.204H0l.306-3.344h1.847V1.427H.098V.479h3.18v3.28H1.311zM4 1.747h1.311A8.095 8.095 0 004.492.426L5.53.085c.306.426.579.873.809 1.363l-.689.299h1.508c.306-.544.569-1.129.809-1.747l1.082.373c-.219.511-.47.969-.743 1.374h1.268V6.23H7.322v.82H10v1.044H7.322V10H6.208V8.094H3.607V7.05h2.601v-.82H4V1.747zm4.568 3.557v-.831H7.322v.831h1.246zm-2.36 0v-.831H5.016v.831h1.192zM5.016 3.557h1.191v-.873H5.016v.873zm2.306-.873v.873h1.246v-.873H7.322z">
+                                </path>
+                            </svg></span>
+                    </span>
+                </span>
+            </label>
+        </div>
+        <div class="bilibili-player-video-danmaku-setting">
+            <span class="bp-svgicon">
+                <span><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
+                        <path
+                            d="M16.5 8c1.289 0 2.49.375 3.5 1.022V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2h7.022A6.5 6.5 0 0116.5 8zM7 13H5a1 1 0 010-2h2a1 1 0 010 2zm2-4H5a1 1 0 010-2h4a1 1 0 010 2z">
+                        </path>
+                        <path
+                            d="M20.587 13.696l-.787-.131a3.503 3.503 0 00-.593-1.051l.301-.804a.46.46 0 00-.21-.56l-1.005-.581a.52.52 0 00-.656.113l-.499.607a3.53 3.53 0 00-1.276 0l-.499-.607a.52.52 0 00-.656-.113l-1.005.581a.46.46 0 00-.21.56l.301.804c-.254.31-.456.665-.593 1.051l-.787.131a.48.48 0 00-.413.465v1.209a.48.48 0 00.413.465l.811.135c.144.382.353.733.614 1.038l-.292.78a.46.46 0 00.21.56l1.005.581a.52.52 0 00.656-.113l.515-.626a3.549 3.549 0 001.136 0l.515.626a.52.52 0 00.656.113l1.005-.581a.46.46 0 00.21-.56l-.292-.78c.261-.305.47-.656.614-1.038l.811-.135A.48.48 0 0021 15.37v-1.209a.48.48 0 00-.413-.465zM16.5 16.057a1.29 1.29 0 11.002-2.582 1.29 1.29 0 01-.002 2.582z">
+                        </path>
+                    </svg></span>
+            </span>
+            <div class="bilibili-player-video-danmaku-setting-wrap">
+                <div class="bilibili-player-video-danmaku-setting-box bui bui-panel bui-dark">
+                    <div class="bui-panel-wrap" style="width: 298px; height: 366px;">
+                        <div class="bui-panel-move" style="width: 564px; transform: translateX(0px);">
+  
+                            <div class="bui-panel-item bui-panel-item-active" style="width: 298px; height: 366px;">
+                                <div class="bilibili-player-video-danmaku-setting-left">
+                                    <div class="bilibili-player-video-danmaku-setting-left-block">
+                                        <div class="bilibili-player-video-danmaku-setting-left-block-title">按类型屏蔽</div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-block-content">
+                                            <div class="bilibili-player-block-filter-type"
+                                                data-name="ctlbar_danmuku_scroll_on" ftype="scroll"><span class="bilibili-player-block-filter-image">
+                                                <span class="bilibili-player-block-filter-image">
+                                                    <span class="bpx-common-svg-icon">
+                                                        <svg viewBox="0 0 28 28">
+                                                            <use xlink:href="#bpx-svg-sprite-dantype-scroll"></use>
+                                                        </svg>
+                                                    </span>
+                                                </span>
+                                                <div class="bilibili-player-block-filter-label">滚动</div>
+                                            </div>
+                                            <div class="bilibili-player-block-filter-type"
+                                                data-name="ctlbar_danmuku_top_on" ftype="top">
+                                                <span class="bilibili-player-block-filter-image">
+                                                    <span class="bpx-common-svg-icon">
+                                                        <svg viewBox="0 0 28 28">
+                                                            <use xlink:href="#bpx-svg-sprite-dantype-top"></use>
+                                                        </svg>
+                                                    </span>
+                                                </span>
+                                                <div class="bilibili-player-block-filter-label">顶部</div>
+                                            </div>
+                                            <div class="bilibili-player-block-filter-type"
+                                                data-name="ctlbar_danmuku_bottom_on" ftype="bottom">
+                                                <span class="bilibili-player-block-filter-image">
+                                                    <span class="bpx-common-svg-icon">
+                                                        <svg viewBox="0 0 28 28">
+                                                            <use xlink:href="#bpx-svg-sprite-dantype-bottom"></use>
+                                                        </svg>
+                                                    </span>
+                                                </span>
+                                                <div class="bilibili-player-block-filter-label">底部</div>
+                                            </div>
+                                            <div class="bilibili-player-block-filter-type"
+                                                data-name="ctlbar_danmuku_color_on" ftype="color">
+                                                <span class="bilibili-player-block-filter-image">
+                                                    <span class="bpx-common-svg-icon">
+                                                        <svg viewBox="0 0 28 28">
+                                                            <use xlink:href="#bpx-svg-sprite-dantype-color"></use>
+                                                        </svg>
+                                                    </span>
+                                                </span>
+                                                <div class="bilibili-player-block-filter-label">彩色</div>
+                                            </div>
+                                            <div class="bilibili-player-block-filter-type"
+                                                data-name="ctlbar_danmuku_special_on" ftype="special">
+                                                <span class="bilibili-player-block-filter-image">
+                                                    <span class="bpx-common-svg-icon">
+                                                        <svg viewBox="0 0 28 28">
+                                                            <use xlink:href="#bpx-svg-sprite-dantype-advanced"></use>
+                                                        </svg>
+                                                    </span>
+                                                </span>
+                                                <div class="bilibili-player-block-filter-label">高级</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-flag">
+                                        <div
+                                            class="bilibili-player-video-danmaku-setting-left-flag-title bui bui-checkbox bui-dark">
+                                            <input class="bui-checkbox-input" type="checkbox" checked=""
+                                                aria-label="智能云屏蔽">
+                                            <label class="bui-checkbox-label">
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-default"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M8 6a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2H8zm0-2h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-selected"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M13 18.25l-1.8-1.8c-.6-.6-1.65-.6-2.25 0s-.6 1.5 0 2.25l2.85 2.85c.318.318.762.468 1.2.448.438.02.882-.13 1.2-.448l8.85-8.85c.6-.6.6-1.65 0-2.25s-1.65-.6-2.25 0l-7.8 7.8zM8 4h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-name">弹幕去重</span>
+                                            </label>
+                                        </div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-flag-content">
+                                            <div class="bilibili-player-setting-flag bui bui-slider bui-dark">
+                                                <div class="bui-track">
+                                                    <div class="bui-bar-wrap">
+  
+  
+                                                        <div class="bui-bar bui-bar-normal" role="progressbar"
+                                                            style="transform: scaleX(0.22222);"></div>
+  
+                                                    </div>
+  
+  
+                                                    <div class="bui-step">
+  
+                                                        <div class="bui-step-item bui-step-item-0" style="left:0%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text"></div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item bui-step-item-100" style="left:100%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text"></div>
+                                                        </div>
+  
+                                                    </div>
+  
+                                                    <div class="bui-thumb" style="transform: translateX(34.6663px);">
+  
+                                                        <div class="bui-thumb-tooltip">3级</div>
+  
+  
+                                                        <div class="bui-thumb-dot"></div>
+  
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-preventshade">
+                                        <span
+                                            class="bilibili-player-video-danmaku-setting-left-preventshade-box bui bui-checkbox bui-dark player-tooltips-trigger"
+                                            data-tooltip="2" data-text="视频底部15%部分为空白保留区" data-position="top-left"
+                                            data-change-mode="1"><input class="bui-checkbox-input" type="checkbox"
+                                                aria-label="防挡字幕">
+                                            <label class="bui-checkbox-label">
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-default"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M8 6a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2H8zm0-2h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-selected"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M13 18.25l-1.8-1.8c-.6-.6-1.65-.6-2.25 0s-.6 1.5 0 2.25l2.85 2.85c.318.318.762.468 1.2.448.438.02.882-.13 1.2-.448l8.85-8.85c.6-.6.6-1.65 0-2.25s-1.65-.6-2.25 0l-7.8 7.8zM8 4h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-name">防挡字幕</span>
+                                            </label></span>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-opacity">
+                                        <div class="bilibili-player-video-danmaku-setting-left-opacity-title">不透明度</div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-opacity-content">
+                                            <div class="bilibili-player-setting-opacity bui bui-slider bui-dark">
+                                                <div class="bui-track">
+  
+                                                    <div class="bui-bar-wrap">
+  
+  
+                                                        <div class="bui-bar bui-bar-normal" role="progressbar"
+                                                            style="transform: scaleX(1);"></div>
+                                                    </div>
+                                                    <div class="bui-thumb" style="transform: translateX(188px);">
+                                                        <div class="bui-thumb-tooltip">100%</div>
+                                                        <div class="bui-thumb-dot"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-area">
+                                        <div class="bilibili-player-video-danmaku-setting-left-area-title">显示区域</div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-area-content">
+                                            <div class="bilibili-player-setting-area bui bui-slider bui-dark">
+                                                <div class="bui-track">
+                                                    <div class="bui-bar-wrap">
+                                                    </div>
+                                                    <div class="bui-step">
+  
+                                                        <div class="bui-step-item bui-step-item-0" style="left:0%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">1/4屏</div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item" style="left:25%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">半屏</div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item" style="left:50%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">3/4屏</div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item" style="left:75%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">不重叠</div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item bui-step-item-100" style="left:100%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">不限</div>
+                                                        </div>
+  
+                                                    </div>
+  
+                                                    <div class="bui-thumb" style="transform: translateX(141px);">
+                                                        <div class="bui-thumb-dot"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-speedplus">
+                                        <div class="bilibili-player-video-danmaku-setting-left-speedplus-title">弹幕速度
+                                        </div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-speedplus-content">
+                                            <div class="bilibili-player-setting-speedplus bui bui-slider bui-dark">
+                                                <div class="bui-track">
+                                                    <div class="bui-bar-wrap">
+                                                        <div class="bui-bar bui-bar-normal" role="progressbar"
+                                                            style="transform: scaleX(0.4975);"></div>
+                                                    </div>
+                                                    <div class="bui-step">
+                                                        <div class="bui-step-item bui-step-item-0" style="left:0%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">慢</div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item bui-step-item-100" style="left:100%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">快</div>
+                                                        </div>
+  
+                                                    </div>
+  
+                                                    <div class="bui-thumb" style="transform: translateX(93.53px);">
+  
+                                                        <div class="bui-thumb-tooltip">100%</div>
+                                                        <div class="bui-thumb-dot"></div>
+  
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-fontsize">
+                                        <div class="bilibili-player-video-danmaku-setting-left-fontsize-title">字体大小
+                                        </div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-fontsize-content">
+                                            <div class="bilibili-player-setting-fontsize bui bui-slider bui-dark">
+                                                <div class="bui-track">
+                                                    <div class="bui-bar-wrap">
+                                                        <div class="bui-bar bui-bar-normal" role="progressbar"
+                                                            style="transform: scaleX(0.5);"></div>
+  
+                                                    </div>
+                                                    <div class="bui-step">
+  
+                                                        <div class="bui-step-item bui-step-item-0" style="left:0%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">小</div>
+                                                        </div>
+  
+                                                        <div class="bui-step-item bui-step-item-100" style="left:100%">
+                                                            <div class="bui-step-dot"></div>
+                                                            <div class="bui-step-text">大</div>
+                                                        </div>
+  
+                                                    </div>
+  
+                                                    <div class="bui-thumb" style="transform: translateX(94px);">
+                                                        <div class="bui-thumb-tooltip">100%</div>
+                                                        <div class="bui-thumb-dot"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-block-word">
+                                        <div class="bilibili-player-video-danmaku-setting-left-block-add">浏览XML弹幕</div>
+                                        <div class="bilibili-player-video-danmaku-setting-left-block-sync">下载XML弹幕</div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-left-more"><span
+                                            class="bilibili-player-video-danmaku-setting-left-more-text">更多弹幕设置</span><span
+                                            class="bp-svgicon"><svg xmlns="http://www.w3.org/2000/svg"
+                                                viewBox="0 0 16 16">
+                                                <path
+                                                    d="M9.188 7.999l-3.359 3.359a.75.75 0 101.061 1.061l3.889-3.889a.75.75 0 000-1.061L6.89 3.58a.75.75 0 10-1.061 1.061l3.359 3.358z">
+                                                </path>
+                                            </svg></span></div>
+                                </div>
+                            </div>
+  
+                            <div class="bui-panel-item" style="width: 266px; height: 254px;">
+                                <div class="bilibili-player-video-danmaku-setting-right">
+                                    <div class="bilibili-player-video-danmaku-setting-right-more"><span
+                                            class="bp-svgicon"><svg xmlns="http://www.w3.org/2000/svg"
+                                                viewBox="0 0 16 16">
+                                                <path
+                                                    d="M6.811 8.001l3.359-3.359a.75.75 0 10-1.061-1.061L5.22 7.471a.75.75 0 000 1.061l3.889 3.888a.75.75 0 101.061-1.061L6.811 8.001z">
+                                                </path>
+                                            </svg></span><span
+                                            class="bilibili-player-video-danmaku-setting-right-more-text">更多弹幕设置</span>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-separator"></div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-fullscreensync">
+                                        <span
+                                            class="bilibili-player-video-danmaku-setting-right-fullscreensync-box bui bui-checkbox bui-dark"><input
+                                                class="bui-checkbox-input" type="checkbox" aria-label="弹幕大小跟随屏幕等比缩放">
+                                            <label class="bui-checkbox-label">
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-default"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M8 6a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2H8zm0-2h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-selected"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M13 18.25l-1.8-1.8c-.6-.6-1.65-.6-2.25 0s-.6 1.5 0 2.25l2.85 2.85c.318.318.762.468 1.2.448.438.02.882-.13 1.2-.448l8.85-8.85c.6-.6.6-1.65 0-2.25s-1.65-.6-2.25 0l-7.8 7.8zM8 4h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-name">弹幕大小跟随屏幕等比缩放</span>
+                                            </label></span>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-speedsync">
+                                        <span
+                                            class="bilibili-player-video-danmaku-setting-right-speedsync-box bui bui-checkbox bui-dark"><input
+                                                class="bui-checkbox-input" type="checkbox" aria-label="弹幕速度同步播放倍数">
+                                            <label class="bui-checkbox-label">
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-default"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M8 6a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2H8zm0-2h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-icon bui-checkbox-icon-selected"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                        viewBox="0 0 32 32">
+                                                        <path
+                                                            d="M13 18.25l-1.8-1.8c-.6-.6-1.65-.6-2.25 0s-.6 1.5 0 2.25l2.85 2.85c.318.318.762.468 1.2.448.438.02.882-.13 1.2-.448l8.85-8.85c.6-.6.6-1.65 0-2.25s-1.65-.6-2.25 0l-7.8 7.8zM8 4h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                        </path>
+                                                    </svg></span>
+                                                <span class="bui-checkbox-name">弹幕速度同步播放倍数</span>
+                                            </label></span>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-font">
+                                        <div class="bilibili-player-video-danmaku-setting-right-font-title">弹幕字体</div>
+                                        <div class="bilibili-player-video-danmaku-setting-right-font-content">
+                                            <div
+                                                class="bilibili-player-video-danmaku-setting-right-font-content-fontfamily bui bui-select bui-dark">
+                                                <div class="bui-select-wrap">
+                                                    <div class="bui-select-border">
+                                                        <div class="bui-select-header">
+                                                            <span class="bui-select-result">黑体</span>
+                                                            <span class="bui-select-arrow">
+                                                                <span class="bui-select-arrow-down"></span>
+                                                            </span>
+                                                        </div>
+                                                        <div class="bui-select-list-wrap">
+                                                            <ul class="bui-select-list" style="border: none;">
+                                                                <li class="bui-select-item bui-select-item-active"
+                                                                    data-value="SimHei, 'Microsoft JhengHei'">黑体</li>
+                                                                <li class="bui-select-item " data-value="SimSun">宋体</li>
+  
+                                                                <li class="bui-select-item " data-value="NSimSun">新宋体
+                                                                </li>
+  
+                                                                <li class="bui-select-item " data-value="FangSong">仿宋
+                                                                </li>
+  
+                                                                <li class="bui-select-item "
+                                                                    data-value="'Microsoft YaHei'">微软雅黑</li>
+  
+                                                                <li class="bui-select-item "
+                                                                    data-value="'Microsoft Yahei UI Light'">微软雅黑 Light
+                                                                </li>
+  
+                                                                <li class="bui-select-item "
+                                                                    data-value="'Noto Sans CJK SC DemiLight'">Noto Sans
+                                                                    DemiLight</li>
+  
+                                                                <li class="bui-select-item "
+                                                                    data-value="'Noto Sans CJK SC Regular'">Noto Sans
+                                                                    Regular</li>
+  
+                                                            </ul>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="bilibili-player-video-danmaku-setting-right-font-bold">
+                                            <span
+                                                class="bilibili-player-video-danmaku-setting-right-font-bold-box bui bui-checkbox bui-dark"><input
+                                                    class="bui-checkbox-input" type="checkbox" aria-label="粗体">
+                                                <label class="bui-checkbox-label">
+                                                    <span class="bui-checkbox-icon bui-checkbox-icon-default"><svg
+                                                            xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                            viewBox="0 0 32 32">
+                                                            <path
+                                                                d="M8 6a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2H8zm0-2h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                            </path>
+                                                        </svg></span>
+                                                    <span class="bui-checkbox-icon bui-checkbox-icon-selected"><svg
+                                                            xmlns="http://www.w3.org/2000/svg" width="32" height="32"
+                                                            viewBox="0 0 32 32">
+                                                            <path
+                                                                d="M13 18.25l-1.8-1.8c-.6-.6-1.65-.6-2.25 0s-.6 1.5 0 2.25l2.85 2.85c.318.318.762.468 1.2.448.438.02.882-.13 1.2-.448l8.85-8.85c.6-.6.6-1.65 0-2.25s-1.65-.6-2.25 0l-7.8 7.8zM8 4h16c2.21 0 4 1.79 4 4v16c0 2.21-1.79 4-4 4H8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4z">
+                                                            </path>
+                                                        </svg></span>
+                                                    <span class="bui-checkbox-name">粗体</span>
+                                                </label></span>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-fontborder">
+                                        <div class="bilibili-player-video-danmaku-setting-right-fontborder-title">描边类型
+                                        </div>
+                                        <div
+                                            class="bilibili-player-video-danmaku-setting-right-fontborder-content bui bui-radio bui-dark">
+                                            <div class="bui-radio-wrap bui-radio-button">
+                                                <div class="bui-radio-group" style="margin: 0 -4px;">
+  
+                                                    <label class="bui-radio-item" style="margin: 0 4px;">
+                                                        <input type="radio" class="bui-radio-input" value="0"
+                                                            name="bui-radio4">
+                                                        <span class="bui-radio-label">
+  
+                                                            <span class="bui-radio-text">重墨</span>
+                                                        </span>
+                                                    </label>
+  
+                                                    <label class="bui-radio-item" style="margin: 0 4px;">
+                                                        <input type="radio" class="bui-radio-input" value="1"
+                                                            name="bui-radio4">
+                                                        <span class="bui-radio-label">
+  
+                                                            <span class="bui-radio-text">描边</span>
+                                                        </span>
+                                                    </label>
+  
+                                                    <label class="bui-radio-item" style="margin: 0 4px;">
+                                                        <input type="radio" class="bui-radio-input" value="2"
+                                                            name="bui-radio4">
+                                                        <span class="bui-radio-label">
+  
+                                                            <span class="bui-radio-text">45°投影</span>
+                                                        </span>
+                                                    </label>
+  
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-separator"></div>
+                                    <div class="bilibili-player-video-danmaku-setting-right-reset bui bui-button bui-button-transparent"
+                                        tabindex="0" role="button">恢复默认设置</div>
+                                </div>
+                            </div>
+  
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="bilibili-player-video-btn bilibili-player-video-btn-quality bilibili-player-video-btn-quality-mod">
+            <div class="bilibili-player-video-quality-menu bui bui-select bui-dark bui-select-quality-menu">
+                <div class="bui-select-wrap">
+                    <div class="bui-select-border">
+                        <div class="bui-select--header">
+                            <span class="bui-select-result">
+                                <span class="bilibili-player-video-quality-text">&nbsp大会员&nbsp</span>
+                            </span>
+                        </div>
+                        <div class="bui-select-list-wrap">
+                            <ul class="bui-select-list">
+  
+                                ` + category_1_html + `
+  
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+  `;
+            playera.append(bottomdiv);
+
+            //1.11.5修复移除关键div导致脚本失效
+            let playerPlaceholder = document.createElement('div');
+            playerPlaceholder.id = 'player_placeholder';
+            playera.append(playerPlaceholder);
+            //console.log($(".bui-switch-input").prop("checked"),document.querySelector("#player_module > div.bilibili-player-video-bottom-area > div.bui-switch > input").checked)
+
+            this.mouseEvent()
+            this.setbili()
+        }
+
+        this.setbili = function () {
+            //1.12.1 记忆功能
+            $(".bilibili-player-block-filter-type").each((liIndex, item) => {
+                let blockdmname = $(item).attr("data-name")
+                switch (blockdmname) {
+                    case 'ctlbar_danmuku_scroll_on':
+                        if (dmblock_scroll == 'off') {
+                            $(item).attr("data-name", 'ctlbar_danmuku_scroll_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-scroll-disabled')
+                        }
+                        break;
+                    case 'ctlbar_danmuku_top_on':
+                        if (dmblock_top == 'off') {
+                            $(item).attr("data-name", 'ctlbar_danmuku_top_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-top-disabled')
+                        }
+                        break;
+                    case 'ctlbar_danmuku_bottom_on':
+                        if (dmblock_bottom == 'off') {
+                            $(item).attr("data-name", 'ctlbar_danmuku_bottom_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-bottom-disabled')
+                        }
+                        break;
+                    case 'ctlbar_danmuku_color_on':
+                        if (dmblock_color == 'off') {
+                            $(item).attr("data-name", 'ctlbar_danmuku_color_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-color-disabled')
+                        }
+                        break;
+                    case 'ctlbar_danmuku_special_on':
+                        if (dmblock_special == 'off') {
+                            $(item).attr("data-name", 'ctlbar_danmuku_special_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-advanced-disabled')
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            })
+            //console.log(buiSwitch)
+            if (buiSwitch == 'false') {
+                $(".bui-switch-input").attr("checked", false);
+            }
+
+            //1.12.1接口记忆修复
+            let index = commonFunctionObject.GMgetValue("index");
+            $(".bilibili-player-video-btn-quality-mod").find('.bui-select-item').removeClass("bui-select-item-active");
+            $(".bilibili-player-video-btn-quality-mod").find('.bui-select-item').each(function (lindex, item) {
+                if ($(item).attr("data-index") == index) {
+                    $(item).addClass("bui-select-item-active");
+                }
+            })
+        }
+
+        this.getset = function () {
+            //1.12.1 记忆功能
+            dmblock_scroll = commonFunctionObject.GMgetValue("scroll");
+            dmblock_top = commonFunctionObject.GMgetValue("top");
+            dmblock_bottom = commonFunctionObject.GMgetValue("bottom");
+            dmblock_color = commonFunctionObject.GMgetValue("color");
+            dmblock_special = commonFunctionObject.GMgetValue("special");
+            buiSwitch = commonFunctionObject.GMgetValue("buiSwitch");
+
+        }
+
+        this.mouseEvent = function () {
+            //1.11.5 弹幕开关
+            let buiSwitchbtn = $(".bui-switch-input");
+            buiSwitchbtn.click(function () {
+                //let buiSwitchbtn = $(".bui-switch-input").prop("checked");
+                //console.log(buiSwitchbtn);
+                if ($(".bui-switch-input").prop("checked")) {
+                    postdownmessage({
+                        str: 'checktrue'
+                    })
+                    commonFunctionObject.GMsetValue('buiSwitch', 'true');
+                    //console.log(commonFunctionObject.GMgetValue("buiSwitch"))
+                } else {
+                    postdownmessage({
+                        str: 'checkfalse'
+                    })
+                    commonFunctionObject.GMsetValue('buiSwitch', 'false');
+                }
+
+            });
+
+            //1.11.8 滑块
+            $(".bui-slider").each(function () {
+                $(this).mousedown(
+                    function (e) {
+                        $(this).on('mousemove.drag', function (e) {
+                            let el = $(this);
+                            let os = el.offset();
+                            let mouseX = e.pageX - os.left;
+                            //alert(mouseX/$(this).width())
+                            if (mouseX <= $(this).width() || mouseX >= 0) {
+                                //bilibili-player-setting-area
+                                let sliderpct = Math.ceil(mouseX / $(this).width() * 100)
+                                let sliderclass = $(this).attr('class')
+                                //alert(sliderclass.indexOf('bilibili-player-setting-area'))
+                                if (sliderclass.indexOf('bilibili-player-setting-area') == -
+                                    1) {
+                                    $(this).find(".bui-thumb").css('transform',
+                                        `translateX(${mouseX}px)`)
+                                } else {
+                                    if (sliderpct > 87) {
+                                        $(this).find(".bui-thumb").css('transform',
+                                            `translateX(${$(this).width()}px)`)
+                                    } else if (sliderpct > 62) {
+                                        $(this).find(".bui-thumb").css('transform',
+                                            `translateX(${Math.ceil($(this).width()) * 0.75}px)`
+                                        )
+                                    } else if (sliderpct > 37) {
+                                        $(this).find(".bui-thumb").css('transform',
+                                            `translateX(${Math.ceil($(this).width()) * 0.5}px)`
+                                        )
+                                    } else if (sliderpct > 12) {
+                                        $(this).find(".bui-thumb").css('transform',
+                                            `translateX(${Math.ceil($(this).width()) * 0.25}px)`
+                                        )
+                                    } else {
+                                        $(this).find(".bui-thumb").css('transform',
+                                            `translateX(${0}px)`)
+                                    }
+                                }
+                                $(this).find(".bui-bar-normal").css('transform',
+                                    `scaleX(${mouseX / $(this).width()})`)
+                                $(this).find(".bui-thumb-tooltip").css('opacity', `1`)
+                                $(this).find(".bui-thumb-tooltip").text(`${sliderpct}%`)
+                                //$(".bilibili-player-video-info-danmaku-text").text(sliderpct)
+                            }
+                        })
+                    }
+                )
+
+            })
+
+            $(document).mouseup(function (e) {
+                $(".bui-slider").each(function () {
+                    $(this).off('mousemove.drag');
+                    $(this).find(".bui-thumb-tooltip").css('opacity', `0`)
+                })
+            })
+
+            //1.11.8 接口按钮
+            $(".bui-select-item").each((liIndex, item) => {
+                item.addEventListener("click", () => {
+                    $(".bui-select-item").removeClass("bui-select-item-active");
+                    $(item).addClass("bui-select-item-active")
+
+                    let index = parseInt($(item).attr("data-index"));
+                    commonFunctionObject.GMsetValue('index', index);
+                    this.videoreplace();
+                });
+            });
+
+            //1.12.1 设置按钮
+            //浏览XML弹幕
+            $('.bilibili-player-video-danmaku-setting-left-block-add').click(function () {
+                window.open(xmlhtml)
+            })
+
+
+            //屏蔽弹幕类型 
+            $(".bilibili-player-block-filter-type").each((liIndex, item) => {
+                item.addEventListener("click", () => {
+                    let blockdmname = $(item).attr("data-name")
+                    let blockdmtype = $(item).attr("ftype")
+                    //console.log(blockdmname)
+                    switch (blockdmname) {
+                        case 'ctlbar_danmuku_scroll_on':
+                            $(item).attr("data-name", 'ctlbar_danmuku_scroll_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-scroll-disabled')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'off');
+                            postdownmessage({
+                                str: blockdmtype + 'off'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_scroll_off':
+                            $(item).attr("data-name", 'ctlbar_danmuku_scroll_on')
+                            $(item).removeClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-scroll')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'on');
+                            postdownmessage({
+                                str: blockdmtype + 'on'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_top_on':
+                            $(item).attr("data-name", 'ctlbar_danmuku_top_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-top-disabled')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'off');
+                            postdownmessage({
+                                str: blockdmtype + 'off'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_top_off':
+                            $(item).attr("data-name", 'ctlbar_danmuku_top_on')
+                            $(item).removeClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-top')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'on');
+                            postdownmessage({
+                                str: blockdmtype + 'on'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_bottom_on':
+                            $(item).attr("data-name", 'ctlbar_danmuku_bottom_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-bottom-disabled')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'off');
+                            postdownmessage({
+                                str: blockdmtype + 'off'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_bottom_off':
+                            $(item).attr("data-name", 'ctlbar_danmuku_bottom_on')
+                            $(item).removeClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-bottom')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'on');
+                            postdownmessage({
+                                str: blockdmtype + 'on'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_color_on':
+                            $(item).attr("data-name", 'ctlbar_danmuku_color_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-color-disabled')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'off');
+                            postdownmessage({
+                                str: blockdmtype + 'off'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_color_off':
+                            $(item).attr("data-name", 'ctlbar_danmuku_color_on')
+                            $(item).removeClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-color')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'on');
+                            postdownmessage({
+                                str: blockdmtype + 'on'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_special_on':
+                            $(item).attr("data-name", 'ctlbar_danmuku_special_off')
+                            $(item).addClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-advanced-disabled')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'off');
+                            postdownmessage({
+                                str: blockdmtype + 'off'
+                            })
+                            break;
+                        case 'ctlbar_danmuku_special_off':
+                            $(item).attr("data-name", 'ctlbar_danmuku_special_on')
+                            $(item).removeClass("bpx-player-active")
+                            $(item).find('use').attr("xlink:href", '#bpx-svg-sprite-dantype-advanced')
+                            commonFunctionObject.GMsetValue(blockdmtype, 'on');
+                            postdownmessage({
+                                str: blockdmtype + 'on'
+                            })
+                            break;
+
+                        default:
+                            break;
+                    }
+
+                })
+            })
+        }
+
+
+        this.start = function () {
+            this.operatOther();
+            this.getset();
+        }
+    }
+    (new superVideoHelper()).start();
+})()
